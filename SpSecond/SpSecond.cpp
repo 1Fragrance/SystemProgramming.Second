@@ -20,6 +20,7 @@ void SetControls(HWND);
 void AppendWindowText(HWND, LPCTSTR);
 void GetFileInfo(LPCTSTR path);
 void ScanFileSystem(LPCTSTR filePath);
+void AddToEditText(HWND, char*);
 
 // NOTE: Handlers
 HINSTANCE hInstance;
@@ -291,6 +292,7 @@ void GetFileInfo(LPCTSTR path)
 			return;
 		}
 
+		SetWindowText(hTextResultWnd, L"");
 		for (int i = 0; i < clustersCount; i++)
 		{
 			LARGE_INTEGER distance;
@@ -315,7 +317,7 @@ void GetFileInfo(LPCTSTR path)
 			}
 			else
 			{
-				SetWindowTextA(hTextResultWnd, buff);
+				AddToEditText(hTextResultWnd, buff);
 			}
 
 			delete[] buff;
@@ -348,3 +350,15 @@ void ScanFileSystem(LPCTSTR filePath)
 
 }
 
+void AddToEditText(HWND hEdit, char* str)
+{
+	int iLen = GetWindowTextLength(hEdit) + strlen(str) + 1;
+	char* newText = (char*)malloc(iLen);
+	if (newText)
+	{
+		GetWindowTextA(hEdit, newText, iLen);
+		strcat_s(newText, iLen, str);
+		SetWindowTextA(hEdit, newText);
+		free(newText);
+	}
+}
