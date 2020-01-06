@@ -1,11 +1,15 @@
 ﻿
 #include "framework.h"
 #include "SpSecond.h"
+#include "winioctl.h"
+#include <string> 
 
 // NOTE: Constants
 #define FILE_MENU_EXIT 1
 #define MAIN_WINDOW_CLASS L"MainWindow"
 #define MAIN_WINDOW_TITLE L"SpSecond"
+// #define FILE_NAME L"E:\\test.txt"
+
 
 // NOTE: Prototypes
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -14,7 +18,8 @@ BOOL InitializeWindow(HINSTANCE, int);
 void SetMenu(HWND);
 void SetControls(HWND);
 void AppendWindowText(HWND, LPCTSTR);
-
+void GetFileInfo(LPCTSTR path);
+void ScanFileSystem(LPCTSTR filePath);
 
 // NOTE: Handlers
 HINSTANCE hInstance;
@@ -22,7 +27,11 @@ HWND hMainWnd;
 HMENU hMenu;
 HWND hInputWnd;
 HWND hResultWnd;
+HWND hTextResultWnd;
 WNDPROC oldInputProc;
+
+
+DWORD dwClusterSizeInBytes = NULL;
 
 // NOTE: Main
 int APIENTRY wWinMain(_In_ HINSTANCE hInst, _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR lpCmdLine, _In_ int nCmdShow)
@@ -138,9 +147,10 @@ LRESULT CALLBACK inputProc(HWND wnd, UINT msg, WPARAM wParam, LPARAM lParam)
 		switch (wParam)
 		{
 		case VK_RETURN:
-			// TODO: Add file reading
 
-			AppendWindowText(hResultWnd, (LPCTSTR)L"privet");
+			TCHAR path[MAX_PATH];;
+			GetWindowText(hInputWnd, path, MAX_PATH);
+			GetFileInfo(path);
 			break;
 		}
 	default:
@@ -168,14 +178,173 @@ void SetControls(HWND hWnd)
 	int windowHeight = rect.bottom - rect.top;
 
 	// TODO: Relative positioning
-	CreateWindowW(L"STATIC", L"Input file name from the root folder and press enter:", WS_VISIBLE | WS_CHILD | WS_BORDER, 0, 0, windowWidth, 30, hWnd, NULL, hInstance, NULL);
+	CreateWindowW(L"STATIC", L"Input file path and press enter:", WS_VISIBLE | WS_CHILD | WS_BORDER, 0, 0, windowWidth, 30, hWnd, NULL, hInstance, NULL);
 	hInputWnd = CreateWindowW(L"Edit", L"", WS_VISIBLE | WS_CHILD | WS_BORDER, 0, 30, windowWidth, 100, hWnd, NULL, hInstance, NULL);
 	oldInputProc = (WNDPROC)SetWindowLongPtr(hInputWnd, GWLP_WNDPROC, (LONG_PTR)inputProc);
-	CreateWindowW(L"STATIC", L"Result: ", WS_VISIBLE | WS_CHILD | WS_BORDER, 0, 130, windowWidth, 150, hWnd, NULL, hInstance, NULL);
-	hResultWnd = CreateWindowW(L"Edit", L"", WS_VISIBLE | WS_CHILD | ES_MULTILINE | WS_BORDER | ES_READONLY, 0, 150, windowWidth, windowHeight, hWnd, NULL, hInstance, NULL);
+	CreateWindowW(L"STATIC", L"File map: ", WS_VISIBLE | WS_CHILD | WS_BORDER, 0, 130, windowWidth / 2, 150, hWnd, NULL, hInstance, NULL);
+	CreateWindowW(L"STATIC", L"File text: ", WS_VISIBLE | WS_CHILD | WS_BORDER, windowWidth / 2, 130, windowWidth, 150, hWnd, NULL, hInstance, NULL);
+	hResultWnd = CreateWindowW(L"Edit", L"", WS_VISIBLE | WS_CHILD | ES_MULTILINE | WS_BORDER | ES_READONLY, 0, 150, windowWidth / 2, windowHeight, hWnd, NULL, hInstance, NULL);
+	hTextResultWnd = CreateWindowW(L"Edit", L"", WS_VISIBLE | WS_CHILD | ES_MULTILINE | WS_BORDER | ES_READONLY, windowWidth / 2, 150, windowWidth, windowHeight, hWnd, NULL, hInstance, NULL);
 }
 
 void AppendWindowText(HWND hWnd, LPCTSTR str)
 {
-	SetWindowText(hWnd, str);
+	// get the current selection
+	DWORD StartPos, EndPos;
+	SendMessage(hWnd, EM_GETSEL, reinterpret_cast<WPARAM>(&StartPos), reinterpret_cast<WPARAM>(&EndPos));
+
+	// move the caret to the end of the text
+	int outLength = GetWindowTextLength(hWnd);
+	SendMessage(hWnd, EM_SETSEL, outLength, outLength);
+
+	// insert the text at the new caret position
+	SendMessage(hWnd, EM_REPLACESEL, TRUE, (LPARAM)str);
+
+	// restore the previous selection
+	SendMessage(hWnd, EM_SETSEL, StartPos, EndPos);
 }
+
+
+#define BUFFER_CHUNK 64 * 1024 * 1024
+void GetFileInfo(LPCTSTR path)
+{
+	UINT32 bufferSize = BUFFER_CHUNK + sizeof(LARGE_INTEGER) * 2;
+	RETRIEVAL_POINTERS_BUFFER* buffer;
+	buffer = (RETRIEVAL_POINTERS_BUFFER*)malloc(bufferSize);;
+	STARTING_VCN_INPUT_BUFFER vcnInputBuffer;
+	vcnInputBuffer.StartingVcn.QuadPart = 0;
+
+	DWORD junk = 0;
+	HANDLE hDevice = INVALID_HANDLE_VALUE;
+	int clustersCount = 0;
+
+	ScanFileSystem(path);
+	if (dwClusterSizeInBytes != NULL)
+	{
+		hDevice = CreateFile(path,
+			GENERIC_READ,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,
+			NULL,
+			OPEN_EXISTING,
+			0,
+			0);
+		while (true)
+		{
+			if (hDevice == NULL || hDevice == INVALID_HANDLE_VALUE)
+			{
+				SetWindowText(hResultWnd, L"File not found");
+				SetWindowText(hTextResultWnd, L"");
+				return;
+			}
+
+			BOOL res = DeviceIoControl(hDevice, FSCTL_GET_RETRIEVAL_POINTERS, &vcnInputBuffer, sizeof(vcnInputBuffer), buffer, bufferSize, &junk, (LPOVERLAPPED)NULL);
+
+			wchar_t outputMsg[MAX_PATH];
+			if (res == FALSE && GetLastError() != ERROR_MORE_DATA)
+			{
+				_snwprintf_s(outputMsg, sizeof(outputMsg), L"Raised error, code: %ld. \nFile:  %ws \n ", GetLastError(), path);
+
+				SetWindowText(hResultWnd, outputMsg);
+				SetWindowText(hTextResultWnd, L"");
+				return;
+			}
+
+
+			if (buffer == NULL || buffer->ExtentCount < 1 || GetLastError() == ERROR_HANDLE_EOF)
+			{
+				SetWindowText(hResultWnd, L"Empty file");
+				SetWindowText(hTextResultWnd, L"");
+				return;
+			}
+
+			_snwprintf_s(outputMsg, sizeof(outputMsg), L"Extents count: %ld.\n", buffer->ExtentCount);
+			SetWindowText(hResultWnd, outputMsg);
+
+			for (int i = 0; i < buffer->ExtentCount; i++)
+			{
+				wchar_t extendInfo[255];
+				// NOTE: VCN - virtual cluster number(offsets within the file/stream space), LCN - logical cluster number(offsets within the volume space)
+				_snwprintf_s(extendInfo, sizeof(extendInfo), L"\n%ld. LCN: %ld \r\n    NEXTVCN: %ld", i + 1, buffer->Extents[i].Lcn.QuadPart, buffer->Extents[i].NextVcn.QuadPart);
+				AppendWindowText(hResultWnd, extendInfo); 
+				clustersCount++;
+			}
+
+			if (res == TRUE)
+			{
+				break;
+			}
+		}
+
+		// NOTE: Reading file
+		DWORD dwBytesRead;
+		hDevice = CreateFile(path,
+			GENERIC_READ,
+			FILE_SHARE_READ,
+			NULL,
+			OPEN_EXISTING,
+			0,
+			0);
+
+		if (!hDevice)
+		{
+			SetWindowText(hTextResultWnd, L"Can't read file");
+			return;
+		}
+
+		for (int i = 0; i < clustersCount; i++)
+		{
+			LARGE_INTEGER distance;
+			distance.QuadPart = (dwClusterSizeInBytes * i);
+
+			SetFilePointerEx(
+				hDevice,
+				distance,
+				NULL,
+				FILE_BEGIN
+			);
+
+			char* buff = new char[dwClusterSizeInBytes];
+			for (int n = 0; n < dwClusterSizeInBytes; n++)
+			{
+				buff[n] = 0;
+			}
+			
+			if (ReadFile(hDevice, buff, dwClusterSizeInBytes, &dwBytesRead, NULL) == FALSE)
+			{
+				SetWindowText(hTextResultWnd, L"Can't read file");
+			}
+			else
+			{
+				SetWindowTextA(hTextResultWnd, buff);
+			}
+
+			delete[] buff;
+		}
+
+		CloseHandle(hDevice);
+	}
+}
+
+
+void ScanFileSystem(LPCTSTR filePath)
+{
+	_TCHAR Buffer[MAX_PATH + 1] = { 0 };
+	
+	if (GetVolumePathNameW(filePath, Buffer, MAX_PATH))
+	{
+		DWORD dwSectorsPerCluster;
+		DWORD dwBytesPerSector;
+		DWORD dwNumberFreeClusters;
+		DWORD dwTotalNumberClusters;
+		GetDiskFreeSpaceW(Buffer, &dwSectorsPerCluster, &dwBytesPerSector, &dwNumberFreeClusters, &dwTotalNumberClusters);
+
+		dwClusterSizeInBytes = dwSectorsPerCluster * dwBytesPerSector;
+	}
+	else 
+	{
+		SetWindowText(hResultWnd, L"Can't find file volume");
+		SetWindowText(hTextResultWnd, L"");
+	}
+
+}
+
