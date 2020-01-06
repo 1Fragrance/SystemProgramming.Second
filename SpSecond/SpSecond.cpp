@@ -79,6 +79,7 @@ ATOM RegisterWindowClass(HINSTANCE hInstance)
 	return RegisterClassEx(&wc);
 }
 
+// NOTE: Initialize window
 BOOL InitializeWindow(HINSTANCE hInst, int nCmdShow)
 {
 	hMainWnd = CreateWindow(
@@ -160,6 +161,7 @@ LRESULT CALLBACK inputProc(HWND wnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
+// NOTE: Set menu for window
 void SetMenu(HWND hWnd)
 {
 	hMenu = CreateMenu();
@@ -171,6 +173,7 @@ void SetMenu(HWND hWnd)
 	SetMenu(hWnd, hMenu);
 }
 
+// NOTE: Set controls for window
 void SetControls(HWND hWnd)
 {
 	RECT rect;
@@ -188,24 +191,26 @@ void SetControls(HWND hWnd)
 	hTextResultWnd = CreateWindowW(L"Edit", L"", WS_VISIBLE | WS_CHILD | ES_MULTILINE | WS_BORDER | ES_READONLY, windowWidth / 2, 150, windowWidth, windowHeight, hWnd, NULL, hInstance, NULL);
 }
 
+// NOTE: Append text to the end (unicode)
 void AppendWindowText(HWND hWnd, LPCTSTR str)
 {
-	// get the current selection
+	// NOTE: get the current selection
 	DWORD StartPos, EndPos;
 	SendMessage(hWnd, EM_GETSEL, reinterpret_cast<WPARAM>(&StartPos), reinterpret_cast<WPARAM>(&EndPos));
 
-	// move the caret to the end of the text
+	//  NOTE: move the caret to the end of the text
 	int outLength = GetWindowTextLength(hWnd);
 	SendMessage(hWnd, EM_SETSEL, outLength, outLength);
 
-	// insert the text at the new caret position
+	//  NOTE: insert the text at the new caret position
 	SendMessage(hWnd, EM_REPLACESEL, TRUE, (LPARAM)str);
 
-	// restore the previous selection
+	//  NOTE: restore the previous selection
 	SendMessage(hWnd, EM_SETSEL, StartPos, EndPos);
 }
 
 
+// NOTE: Read file, get it map, parse text and show it
 #define BUFFER_CHUNK 64 * 1024 * 1024
 void GetFileInfo(LPCTSTR path)
 {
@@ -219,9 +224,12 @@ void GetFileInfo(LPCTSTR path)
 	HANDLE hDevice = INVALID_HANDLE_VALUE;
 	int clustersCount = 0;
 
+	// NOTE: Get cluster size;
 	ScanFileSystem(path);
+
 	if (dwClusterSizeInBytes != NULL)
 	{
+		// NOTE: Getting file handler
 		hDevice = CreateFile(path,
 			GENERIC_READ,
 			FILE_SHARE_READ | FILE_SHARE_WRITE,
@@ -231,6 +239,7 @@ void GetFileInfo(LPCTSTR path)
 			0);
 		while (true)
 		{
+			// NOTE: File not found
 			if (hDevice == NULL || hDevice == INVALID_HANDLE_VALUE)
 			{
 				SetWindowText(hResultWnd, L"File not found");
@@ -238,8 +247,10 @@ void GetFileInfo(LPCTSTR path)
 				return;
 			}
 
+			// NOTE: Get file pointers
 			BOOL res = DeviceIoControl(hDevice, FSCTL_GET_RETRIEVAL_POINTERS, &vcnInputBuffer, sizeof(vcnInputBuffer), buffer, bufferSize, &junk, (LPOVERLAPPED)NULL);
 
+			// NOTE: Smth goes wrong
 			wchar_t outputMsg[MAX_PATH];
 			if (res == FALSE && GetLastError() != ERROR_MORE_DATA)
 			{
@@ -250,7 +261,7 @@ void GetFileInfo(LPCTSTR path)
 				return;
 			}
 
-
+			// NOTE: File is empty
 			if (buffer == NULL || buffer->ExtentCount < 1 || GetLastError() == ERROR_HANDLE_EOF)
 			{
 				SetWindowText(hResultWnd, L"Empty file");
@@ -258,6 +269,7 @@ void GetFileInfo(LPCTSTR path)
 				return;
 			}
 
+			// NOTE: Show file info
 			_snwprintf_s(outputMsg, sizeof(outputMsg), L"Extents count: %ld.\n", buffer->ExtentCount);
 			SetWindowText(hResultWnd, outputMsg);
 
@@ -292,12 +304,13 @@ void GetFileInfo(LPCTSTR path)
 			return;
 		}
 
+		// NOTE: Read file context cluster by cluster
 		SetWindowText(hTextResultWnd, L"");
 		for (int i = 0; i < clustersCount; i++)
 		{
+			// NOTE: Move file pointer to the next cluster
 			LARGE_INTEGER distance;
 			distance.QuadPart = (dwClusterSizeInBytes * i);
-
 			SetFilePointerEx(
 				hDevice,
 				distance,
@@ -317,6 +330,7 @@ void GetFileInfo(LPCTSTR path)
 			}
 			else
 			{
+				// NOTE: Append text
 				AddToEditText(hTextResultWnd, buff);
 			}
 
@@ -327,7 +341,7 @@ void GetFileInfo(LPCTSTR path)
 	}
 }
 
-
+// NOTE: Scan file system and get cluster size
 void ScanFileSystem(LPCTSTR filePath)
 {
 	_TCHAR Buffer[MAX_PATH + 1] = { 0 };
@@ -350,6 +364,7 @@ void ScanFileSystem(LPCTSTR filePath)
 
 }
 
+// NOTE: Append text to the edit (not unicode)
 void AddToEditText(HWND hEdit, char* str)
 {
 	int iLen = GetWindowTextLength(hEdit) + strlen(str) + 1;
